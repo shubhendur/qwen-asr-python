@@ -1,0 +1,7 @@
+torch>=2.0.0
+transformers>=4.35.0
+sounddevice>=0.4.0
+numpy>=1.21.0
+pynput>=1.7.0
+accelerate>=0.20.0
+scipy>=1.7.0
