@@ -11,6 +11,18 @@ import time
 import queue
 import threading
 import tempfile
+
+# ==========================================
+# MPS MEMORY OPTIMIZATION (must be set BEFORE torch is imported)
+# ==========================================
+# On Apple Silicon, PyTorch by default caps GPU memory usage at ~70% to
+# leave headroom for other apps. Setting this to 0.0 removes the cap and
+# lets PyTorch use all available unified memory for the model and KV-cache,
+# which reduces memory pressure and speeds up inference.
+if sys.platform == "darwin":
+    os.environ.setdefault("PYTORCH_MPS_HIGH_WATERMARK_RATIO", "0.0")
+    print("[System] macOS detected — MPS memory cap removed (PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0)")
+
 import numpy as np
 import sounddevice as sd
 import torch
