@@ -1,13 +1,35 @@
 # Qwen3 Voice-to-Text Dictation System
 
-```bash
-cd /Users/shubhendu.rohatgi/Documents/AI/qwen-asr-python
-source qwen_env/bin/activate
+A comprehensive voice-to-text system using Qwen3-ASR models with global hotkey support.  
+All transcription runs **locally** — no cloud, no internet required after model download.
+
+## Quick Start (Windows 11)
+
+Open CMD with administrative rights:
+```cmd
 python qwen_dictation.py
 ```
 
+## RAM Consumption (Intel i7-1355U, 16 GB RAM)
 
-A comprehensive voice-to-text system using Qwen3-ASR models with global hotkey support.
+| Config | Model(s) | Before Optimization | After Optimization |
+|--------|----------|--------------------|--------------------|
+| 1 | Qwen3-ASR-1.7B | 8 GB | ~4–5 GB |
+| 2 | Qwen3-ASR-0.6B | 4.5 GB | ~2.5–3 GB |
+| 3 | 0.6B + Forced Aligner | 4 GB | ~2.5–3 GB |
+| 4 | 1.7B + Forced Aligner | 8 GB | ~5–6 GB |
+
+### Optimizations Applied
+- **BFloat16 on CPU** — Intel 13th gen supports BF16 natively, halving weight memory
+- **Batch size 32→1** — single utterance at a time, eliminates wasted KV-cache
+- **max_new_tokens 256→100** — sufficient for dictation clips (5–30 seconds)
+- **CPU thread tuning** — 6 intra-op + 2 inter-op threads for i7-1355U (2P+8E cores)
+- **`torch.inference_mode()`** — skips autograd graph tracking during transcription
+- **Garbage collection** — explicit `gc.collect()` after each inference to prevent memory creep
+- **30s audio cap** — prevents unbounded memory growth for long recordings
+
+### GPU Note (Intel Iris Xe)
+The i7-1355U has Intel Iris Xe integrated graphics with **no dedicated VRAM** — it shares system RAM. Using the GPU does **not** save memory or provide meaningful speedup on this hardware. The code auto-detects Intel XPU but **CPU with BF16 is the recommended path** for this chip. If you have an NVIDIA GPU or Intel Arc (discrete), those will provide real acceleration.
 
 ## Features
 
@@ -16,8 +38,8 @@ A comprehensive voice-to-text system using Qwen3-ASR models with global hotkey s
 - **Global Hotkeys**: Press and hold Right Alt to record speech
 - **Direct Text Injection**: Types transcribed text directly without clipboard
 - **Cross-Platform**: Works on macOS, Windows, and Linux
-- **Hardware Acceleration**: Automatic GPU detection (CUDA/MPS/CPU)
-- **Robust Error Handling**: Graceful failure recovery and user feedback
+- **Hardware Acceleration**: Automatic GPU detection (CUDA / Intel XPU / MPS / CPU)
+- **Memory Optimized**: BF16, batch-size-1, inference_mode, GC cleanup
 
 ## Installation
 
@@ -26,25 +48,30 @@ A comprehensive voice-to-text system using Qwen3-ASR models with global hotkey s
    pip install -r requirements.txt
    ```
 
-2. **Grant Permissions** (macOS):
-   - Go to System Settings > Privacy & Security > Accessibility
-   - Add Terminal (or your Python IDE) to allowed applications
-   - Grant microphone access when prompted
+2. **Download Model** (optional — auto-downloads on first run):
+   ```bash
+   python download_model.py
+   ```
 
 3. **Grant Permissions** (Windows):
    - Run Terminal as Administrator for elevated applications
    - Allow microphone access when prompted
 
+4. **Grant Permissions** (macOS):
+   - Go to System Settings > Privacy & Security > Accessibility
+   - Add Terminal (or your Python IDE) to allowed applications
+   - Grant microphone access when prompted
+
 ## Usage
 
 1. **Run the Script**:
    ```bash
-   python3 qwen_dictation.py
+   python qwen_dictation.py
    ```
 
 2. **Select Model Configuration**:
-   - Option 1: Qwen3-ASR-1.7B (better quality, more VRAM)
-   - Option 2: Qwen3-ASR-0.6B (faster, less VRAM)  
+   - Option 1: Qwen3-ASR-0.6B ⭐ Recommended (fast, ~3-5s transcription)
+   - Option 2: Qwen3-ASR-1.7B (higher quality, ~30s on CPU)  
    - Option 3: 0.6B + Forced Aligner
    - Option 4: 1.7B + Forced Aligner
 
@@ -57,19 +84,7 @@ A comprehensive voice-to-text system using Qwen3-ASR models with global hotkey s
    - Release to automatically type the transcribed text
    - Press Escape to exit
 
-## Performance Notes
-
-- **First Run**: Models will download automatically (may take several minutes)
-- **GPU Recommended**: NVIDIA GPUs with CUDA or Apple Silicon with MPS
-- **RAM Requirements**: 
-  - 0.6B model: ~4GB RAM
-  - 1.7B model: ~8GB RAM
-- **Audio Quality**: Use a good microphone for best results
-
 ## Troubleshooting
-
-### "Command not found: python"
-Use `python3` instead of `python` on macOS/Linux.
 
 ### Models fail to download
 - Ensure stable internet connection
@@ -89,29 +104,29 @@ Use `python3` instead of `python` on macOS/Linux.
 ### Out of memory errors
 - Use smaller model (0.6B instead of 1.7B)
 - Close other applications to free RAM
-- Restart the script to clear GPU memory
+- Restart the script to clear memory
 
 ## Hardware Requirements
 
 ### Minimum
-- **CPU**: Modern multi-core processor
-- **RAM**: 8GB (for 0.6B model)
-- **Storage**: 10GB free space
+- **CPU**: Modern multi-core processor (Intel 11th gen+ or AMD Zen 3+)
+- **RAM**: 8 GB (for 0.6B model)
+- **Storage**: 10 GB free space
 - **Microphone**: Any USB/built-in microphone
 
 ### Recommended  
 - **GPU**: NVIDIA RTX series or Apple Silicon M1/M2/M3
-- **RAM**: 16GB+ (for 1.7B model)
-- **Storage**: SSD with 20GB+ free space
+- **RAM**: 16 GB+ (for 1.7B model)
+- **Storage**: SSD with 20 GB+ free space
 - **Microphone**: USB headset or quality desktop microphone
 
 ## Model Information
 
-| Model | Size | Speed | Quality | VRAM |
-|-------|------|-------|---------|------|
-| Qwen3-ASR-0.6B | 1.2GB | Fast | Good | ~2GB |
-| Qwen3-ASR-1.7B | 3.5GB | Medium | Excellent | ~4GB |
-| + Forced Aligner | +1GB | Slightly slower | + Timestamps | +1GB |
+| Model | Download Size | RAM (optimized) | Quality |
+|-------|--------------|----------------|---------|
+| Qwen3-ASR-0.6B | ~1.2 GB | ~2.5–3 GB | Good |
+| Qwen3-ASR-1.7B | ~3.5 GB | ~4–5 GB | Excellent |
+| + Forced Aligner | +1 GB | +0.5–1 GB | + Timestamps |
 
 ## Privacy & Security
 

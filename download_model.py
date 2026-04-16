@@ -5,8 +5,8 @@ import os
 import sys
 
 print("--- Qwen3 Model Downloader ---")
-print("1. Qwen3-ASR-1.7B")
-print("2. Qwen3-ASR-0.6B")
+print("1. Qwen3-ASR-0.6B (Recommended — fast, low RAM)")
+print("2. Qwen3-ASR-1.7B (Higher quality, slower)")
 print("3. Qwen3-ASR-0.6B with Qwen3-ForcedAligner-0.6B")
 print("4. Qwen3-ASR-1.7B with Qwen3-ForcedAligner-0.6B")
 
@@ -14,15 +14,15 @@ try:
     choice = input("Select Model Configuration to download (1-4): ").strip()
     if choice not in ['1', '2', '3', '4']:
         print("Invalid choice. Using default: Qwen3-ASR-0.6B")
-        choice = '2'
+        choice = '1'
 except KeyboardInterrupt:
     print("\n[System] Exiting...")
     sys.exit(0)
 
 # Map choices to the required model repo IDs
 asr_model_map = {
-    '1': "Qwen/Qwen3-ASR-1.7B",
-    '2': "Qwen/Qwen3-ASR-0.6B",
+    '1': "Qwen/Qwen3-ASR-0.6B",
+    '2': "Qwen/Qwen3-ASR-1.7B",
     '3': "Qwen/Qwen3-ASR-0.6B",
     '4': "Qwen/Qwen3-ASR-1.7B",
 }
@@ -54,21 +54,24 @@ try:
     import torch
     from qwen_asr import Qwen3ASRModel
 
-    # Device detection
+    # Device detection (priority: CUDA > XPU > MPS > CPU)
     if torch.cuda.is_available():
         device = "cuda"
+    elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+        device = "xpu"
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
         device = "mps"
     else:
         device = "cpu"
-    torch_dtype = torch.bfloat16 if device != "cpu" else torch.float32
+    # BFloat16 is natively supported on Intel 13th gen (i7-1355U) via AMX/AVX
+    torch_dtype = torch.bfloat16
 
     # Build load kwargs — only add forced_aligner when needed
     load_kwargs = dict(
         dtype=torch_dtype,
         device_map=device,
-        max_inference_batch_size=32,
-        max_new_tokens=256,
+        max_inference_batch_size=1,
+        max_new_tokens=100,
     )
 
     if need_aligner:

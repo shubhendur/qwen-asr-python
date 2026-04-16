@@ -6,6 +6,7 @@ Using the official qwen-asr package for reliable speech recognition
 
 import os
 import sys
+import gc
 import time
 import queue
 import threading
@@ -19,11 +20,19 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # ==========================================
+# 0. CPU THREAD OPTIMIZATION (i7-1355U: 2P+8E = 10 cores)
+# ==========================================
+# Pin PyTorch to physical core count to avoid thread oversubscription
+torch.set_num_threads(6)         # Use P-cores + some E-cores for intra-op
+torch.set_num_interop_threads(2) # For inter-op parallelism
+print(f"[System] PyTorch threads: {torch.get_num_threads()} intra-op, {torch.get_num_interop_threads()} inter-op")
+
+# ==========================================
 # 1. CONFIGURATION & MODEL SELECTION
 # ==========================================
 print("--- Global Qwen3 Voice-to-Text Utility ---")
-print("1. Qwen3-ASR-1.7B")
-print("2. Qwen3-ASR-0.6B")
+print("1. Qwen3-ASR-0.6B (Recommended — fast, low RAM)")
+print("2. Qwen3-ASR-1.7B (Higher quality, slower)")
 print("3. Qwen3-ASR-0.6B with Qwen3-ForcedAligner-0.6B")
 print("4. Qwen3-ASR-1.7B with Qwen3-ForcedAligner-0.6B")
 
@@ -31,7 +40,7 @@ try:
     choice = input("Select Model Configuration (1-4): ").strip()
     if choice not in ['1', '2', '3', '4']:
         print("Invalid choice. Using default: Qwen3-ASR-0.6B")
-        choice = '2'
+        choice = '1'
 except KeyboardInterrupt:
     print("\n[System] Exiting...")
     sys.exit(0)
@@ -50,26 +59,34 @@ if choice in ['1', '2']:
 
 # Map choices to Hugging Face Repositories
 model_id_map = {
-    '1': "Qwen/Qwen3-ASR-1.7B",
-    '2': "Qwen/Qwen3-ASR-0.6B",
+    '1': "Qwen/Qwen3-ASR-0.6B",
+    '2': "Qwen/Qwen3-ASR-1.7B",
     '3': "Qwen/Qwen3-ASR-0.6B", 
     '4': "Qwen/Qwen3-ASR-1.7B"
 }
 
 MODEL_ID = model_id_map.get(choice, "Qwen/Qwen3-ASR-0.6B")
 
-# Better device detection
+# Device detection (priority: CUDA > XPU > MPS > CPU)
 if torch.cuda.is_available():
     DEVICE = "cuda"
-    print(f"[System] CUDA detected: {torch.cuda.get_device_name()}")
+    print(f"[System] NVIDIA CUDA detected: {torch.cuda.get_device_name()}")
+elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+    DEVICE = "xpu"
+    xpu_name = torch.xpu.get_device_name(0) if hasattr(torch.xpu, 'get_device_name') else "Intel GPU"
+    print(f"[System] Intel XPU detected: {xpu_name}")
+    print("[System] Note: Iris Xe (integrated) uses shared system RAM — not faster than CPU.")
+    print("[System]       Intel Arc (discrete) has dedicated VRAM — will be faster.")
 elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
     DEVICE = "mps"
     print("[System] Apple Silicon (MPS) detected")
 else:
     DEVICE = "cpu"
-    print("[System] Using CPU (consider GPU for better performance)")
+    print("[System] Using CPU")
 
-TORCH_DTYPE = torch.bfloat16 if DEVICE != "cpu" else torch.float32
+# BFloat16 is natively supported on Intel 13th gen (i7-1355U) via AMX/AVX
+# This halves weight memory vs float32, even on CPU
+TORCH_DTYPE = torch.bfloat16
 
 print(f"\n[System] Initializing {MODEL_ID} on {DEVICE.upper()}...")
 print("[System] This may take a few minutes on first run...")
@@ -80,8 +97,11 @@ try:
     load_kwargs = dict(
         dtype=TORCH_DTYPE,
         device_map=DEVICE,
-        max_inference_batch_size=32,
-        max_new_tokens=256,
+        # Batch size 1: we only process one utterance at a time
+        # (32 was pre-allocating KV-cache for 32 streams — wasting ~1-2 GB)
+        max_inference_batch_size=1,
+        # 100 tokens is plenty for dictation clips (5-30 seconds of speech)
+        max_new_tokens=100,
     )
 
     # Add forced aligner only for choices 3/4
@@ -97,33 +117,102 @@ try:
 
     model = Qwen3ASRModel.from_pretrained(MODEL_ID, **load_kwargs)
 
+    # Force GC after model load to reclaim any transient allocations
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+        torch.xpu.empty_cache()
+
 except Exception as e:
     print(f"[Error] Failed to load model: {e}")
     print("[System] Please ensure you have sufficient RAM/VRAM and internet connection.")
     sys.exit(1)
 
-print("[System] Models loaded successfully.\n")
+print("[System] Models loaded successfully.")
+print(f"[System] Dtype: {TORCH_DTYPE}, Device: {DEVICE}")
+
+# ==========================================
+# 1b. TORCH.COMPILE — JIT optimization for faster CPU inference
+# ==========================================
+# torch.compile fuses operations and generates optimized kernels.
+# First inference is slow (compilation), but subsequent ones are 20-40% faster.
+try:
+    if DEVICE == "cpu":
+        print("[System] Compiling model with torch.compile (this speeds up inference)...")
+        model = torch.compile(model, mode="default", dynamic=True)
+        print("[System] Model compiled successfully.")
+    else:
+        print("[System] Skipping torch.compile (not needed for GPU).")
+except Exception as e:
+    print(f"[System] torch.compile not available ({e}), using default inference.")
+
+# Warmup pass — triggers JIT compilation so the first real transcription is fast
+try:
+    print("[System] Running warmup inference (first run compiles optimized kernels)...")
+    import tempfile as _tf
+    import numpy as _np_warmup
+    
+    # Generate 1 second of silence for warmup
+    _warmup_audio = _np_warmup.zeros(16000, dtype=_np_warmup.float32)
+    with _tf.NamedTemporaryFile(suffix=".wav", delete=False) as _wf:
+        _warmup_path = _wf.name
+    try:
+        import soundfile as sf
+        sf.write(_warmup_path, _warmup_audio, 16000)
+    except ImportError:
+        import scipy.io.wavfile as wavfile
+        wavfile.write(_warmup_path, 16000, (_warmup_audio * 32767).astype(_np_warmup.int16))
+    
+    _warmup_start = time.time()
+    with torch.inference_mode():
+        model.transcribe(audio=_warmup_path, language="English", return_time_stamps=False)
+    _warmup_elapsed = time.time() - _warmup_start
+    print(f"[System] Warmup complete ({_warmup_elapsed:.1f}s). Subsequent transcriptions will be faster.")
+    
+    # Cleanup warmup file and variables
+    try:
+        os.unlink(_warmup_path)
+    except:
+        pass
+    del _warmup_audio, _warmup_path, _warmup_start, _warmup_elapsed
+    gc.collect()
+except Exception as e:
+    print(f"[System] Warmup skipped ({e}). First transcription may be slower.")
+
+print()
 
 # ==========================================
 # 2. AUDIO RECORDING ENGINE
 # ==========================================
 class AudioRecorder:
+    MAX_DURATION_SECONDS = 30  # Cap recording to prevent unbounded memory growth
+
     def __init__(self, sample_rate=16000):
         self.sample_rate = sample_rate
         self.q = queue.Queue()
         self.stream = None
         self.is_recording = False
         self.audio_data = []
+        self._chunk_count = 0
 
-    def callback(self, indata, frames, time, status):
+    def callback(self, indata, frames, time_info, status):
         """This is called continuously by sounddevice during recording."""
         if self.is_recording:
-            self.q.put(indata.copy())
+            self._chunk_count += 1
+            # Estimate elapsed time from chunk count
+            elapsed = (self._chunk_count * len(indata)) / self.sample_rate
+            if elapsed < self.MAX_DURATION_SECONDS:
+                self.q.put(indata.copy())
+            elif elapsed < self.MAX_DURATION_SECONDS + 0.5:
+                # Print warning only once (within a 0.5s window)
+                print(f"\n[Warning] Max recording duration reached ({self.MAX_DURATION_SECONDS}s)")
 
     def start(self):
         """Opens the mic stream and begins capturing."""
         self.is_recording = True
         self.audio_data = []
+        self._chunk_count = 0
         self.q = queue.Queue()
         self.stream = sd.InputStream(
             samplerate=self.sample_rate, 
@@ -190,16 +279,17 @@ def process_and_type(audio_np):
                 audio_int16 = (audio_np * 32767).astype(np.int16)
                 wavfile.write(temp_path, 16000, audio_int16)
             
-            # Transcribe with qwen-asr
+            # Transcribe with qwen-asr (inference_mode skips autograd overhead)
             language = None
             if lang_code:
                 language = "English" if lang_code == "en" else "Hindi"
-                
-            results = model.transcribe(
-                audio=temp_path,
-                language=language,
-                return_time_stamps=False,
-            )
+
+            with torch.inference_mode():
+                results = model.transcribe(
+                    audio=temp_path,
+                    language=language,
+                    return_time_stamps=False,
+                )
             
             transcription = results[0].text.strip() if results else ""
             
@@ -237,6 +327,12 @@ def process_and_type(audio_np):
     except Exception as e:
         print(f"\n[Error] Unexpected error during transcription: {e}")
     finally:
+        # Reclaim transient inference memory
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+            torch.xpu.empty_cache()
         # Unlock the system for the next recording
         is_processing = False
         print("\n[System] Ready. Hold 'Right Alt' to speak.")
