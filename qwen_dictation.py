@@ -20,12 +20,18 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # ==========================================
-# 0. CPU THREAD OPTIMIZATION (i7-1355U: 2P+8E = 10 cores)
+# 0. CPU THREAD OPTIMIZATION (platform-aware)
 # ==========================================
-# Pin PyTorch to physical core count to avoid thread oversubscription
-torch.set_num_threads(6)         # Use P-cores + some E-cores for intra-op
-torch.set_num_interop_threads(2) # For inter-op parallelism
-print(f"[System] PyTorch threads: {torch.get_num_threads()} intra-op, {torch.get_num_interop_threads()} inter-op")
+import platform
+
+if platform.system() == "Darwin":
+    # macOS + Apple Silicon: let Grand Central Dispatch manage threads
+    print(f"[System] macOS detected — using OS-managed threading (threads: {torch.get_num_threads()})")
+else:
+    # Windows/Linux: manual tuning for Intel i7-1355U (2P+8E = 10 cores)
+    torch.set_num_threads(6)         # Use P-cores + some E-cores for intra-op
+    torch.set_num_interop_threads(2) # For inter-op parallelism
+    print(f"[System] PyTorch threads: {torch.get_num_threads()} intra-op, {torch.get_num_interop_threads()} inter-op")
 
 # ==========================================
 # 1. CONFIGURATION & MODEL SELECTION
@@ -84,9 +90,14 @@ else:
     DEVICE = "cpu"
     print("[System] Using CPU")
 
-# BFloat16 is natively supported on Intel 13th gen (i7-1355U) via AMX/AVX
-# This halves weight memory vs float32, even on CPU
-TORCH_DTYPE = torch.bfloat16
+# Select dtype based on device capabilities
+if DEVICE == "mps":
+    # Apple Silicon MPS does NOT support bfloat16 — use float16 instead
+    TORCH_DTYPE = torch.float16
+    print("[System] Using float16 (MPS does not support bfloat16)")
+else:
+    # CUDA, XPU, and modern Intel CPUs (13th gen+) support bfloat16
+    TORCH_DTYPE = torch.bfloat16
 
 print(f"\n[System] Initializing {MODEL_ID} on {DEVICE.upper()}...")
 print("[System] This may take a few minutes on first run...")
@@ -123,6 +134,8 @@ try:
         torch.cuda.empty_cache()
     elif hasattr(torch, 'xpu') and torch.xpu.is_available():
         torch.xpu.empty_cache()
+    elif DEVICE == "mps":
+        torch.mps.empty_cache()
 
 except Exception as e:
     print(f"[Error] Failed to load model: {e}")
@@ -333,9 +346,14 @@ def process_and_type(audio_np):
             torch.cuda.empty_cache()
         elif hasattr(torch, 'xpu') and torch.xpu.is_available():
             torch.xpu.empty_cache()
+        elif DEVICE == "mps":
+            torch.mps.empty_cache()
         # Unlock the system for the next recording
         is_processing = False
-        print("\n[System] Ready. Hold 'Right Alt' to speak.")
+        if platform.system() == "Darwin":
+            print("\n[System] Ready. Hold 'Right Option' to speak.")
+        else:
+            print("\n[System] Ready. Hold 'Right Alt' to speak.")
 
 # ==========================================
 # 4. GLOBAL KEYBOARD LISTENER
@@ -378,7 +396,10 @@ def main():
         print(" SYSTEM READY ")
         print("=======================================================")
         print("1. Click into ANY text box (Browser, Word, Notepad).")
-        print("2. Press and HOLD the 'Right Alt' key.")
+        if platform.system() == "Darwin":
+            print("2. Press and HOLD the 'Right Option' key.")
+        else:
+            print("2. Press and HOLD the 'Right Alt' key.")
         print("3. Speak your sentence.")
         print("4. Release the key to automatically type the text.")
         print("5. Press 'Escape' to exit the program.")

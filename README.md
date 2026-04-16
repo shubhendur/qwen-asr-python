@@ -57,10 +57,15 @@ The i7-1355U has Intel Iris Xe integrated graphics with **no dedicated VRAM** �
    - Run Terminal as Administrator for elevated applications
    - Allow microphone access when prompted
 
-4. **Grant Permissions** (macOS):
-   - Go to System Settings > Privacy & Security > Accessibility
-   - Add Terminal (or your Python IDE) to allowed applications
-   - Grant microphone access when prompted
+4. **Grant Permissions** (macOS — BOTH required):
+   - Go to **System Settings → Privacy & Security → Accessibility**
+     - Add Terminal.app (or your IDE) and toggle **ON**
+   - Go to **System Settings → Privacy & Security → Input Monitoring**
+     - Add Terminal.app (or your IDE) and toggle **ON**
+   - Go to **System Settings → Privacy & Security → Microphone**
+     - Allow Terminal.app (or your IDE)
+   - **Restart Terminal** after granting all permissions
+   - Note: On Mac, "Right Alt" = **Right Option** key
 
 ## Usage
 
