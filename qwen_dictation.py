@@ -74,37 +74,29 @@ TORCH_DTYPE = torch.bfloat16 if DEVICE != "cpu" else torch.float32
 print(f"\n[System] Initializing {MODEL_ID} on {DEVICE.upper()}...")
 print("[System] This may take a few minutes on first run...")
 
-# Load Qwen3-ASR Model with error handling
+# Load Qwen3-ASR Model with error handling (single load)
 try:
-    print("[System] Loading Qwen3-ASR model...")
-    model = Qwen3ASRModel.from_pretrained(
-        MODEL_ID,
+    # Build load arguments
+    load_kwargs = dict(
         dtype=TORCH_DTYPE,
         device_map=DEVICE,
         max_inference_batch_size=32,
         max_new_tokens=256,
     )
-    
-    # Load Forced Aligner if selected
+
+    # Add forced aligner only for choices 3/4
     if choice in ['3', '4']:
-        try:
-            print("[System] Initializing Qwen3-ForcedAligner-0.6B...")
-            model = Qwen3ASRModel.from_pretrained(
-                MODEL_ID,
-                dtype=TORCH_DTYPE,
-                device_map=DEVICE,
-                max_inference_batch_size=32,
-                max_new_tokens=256,
-                forced_aligner="Qwen/Qwen3-ForcedAligner-0.6B",
-                forced_aligner_kwargs=dict(
-                    dtype=TORCH_DTYPE,
-                    device_map=DEVICE,
-                ),
-            )
-        except Exception as e:
-            print(f"[Warning] Failed to load forced aligner: {e}")
-            print("[System] Continuing with ASR model only...")
-        
+        print("[System] Loading Qwen3-ASR model with Qwen3-ForcedAligner-0.6B...")
+        load_kwargs["forced_aligner"] = "Qwen/Qwen3-ForcedAligner-0.6B"
+        load_kwargs["forced_aligner_kwargs"] = dict(
+            dtype=TORCH_DTYPE,
+            device_map=DEVICE,
+        )
+    else:
+        print("[System] Loading Qwen3-ASR model...")
+
+    model = Qwen3ASRModel.from_pretrained(MODEL_ID, **load_kwargs)
+
 except Exception as e:
     print(f"[Error] Failed to load model: {e}")
     print("[System] Please ensure you have sufficient RAM/VRAM and internet connection.")
