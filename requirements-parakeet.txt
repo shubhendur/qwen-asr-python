@@ -1,0 +1,31 @@
+# ============================================================================
+# Parakeet TDT 0.6B v3 backend (options 7, 8 in qwen_dictation.py).
+#
+# Two install profiles, controlled by environment markers so a single file
+# works on both Mac and Windows/Linux:
+#
+#   * Option 7 (MLX, Apple Silicon only) -> parakeet-mlx + mlx (auto-pulled)
+#   * Option 8 (ONNX INT8, cross-platform) -> onnx-asr + onnxruntime
+#
+# Install both files together:
+#
+#   pip3 install -r requirements.txt -r requirements-parakeet.txt
+#
+# Or via the bundled helper:
+#
+#   ./setup.sh --parakeet      (macOS / Linux)
+#   setup.bat  --parakeet      (Windows)
+#
+# Notes:
+#   - parakeet-mlx is mac-arm64 only; pip will skip it on other platforms via
+#     the environment marker, so the file is safe to install on any OS.
+#   - onnx-asr currently has a known incompatibility with onnxruntime 1.24.1;
+#     pin to <1.24 OR >=1.25 if you hit "Cannot find symbol" errors at load.
+# ============================================================================
+
+# Cross-platform CPU INT8 backend (option 8)
+onnx-asr>=0.4.0
+soundfile>=0.12.0
+
+# Apple Silicon GPU backend (option 7) — pip skips this line on x86_64
+parakeet-mlx>=0.4.0; sys_platform == "darwin" and platform_machine == "arm64"

@@ -1,0 +1,17 @@
+# ============================================================================
+# PyTorch backend (options 1–4 in qwen_dictation.py).
+# REQUIRES Python >= 3.10 (qwen-asr 0.0.6 hard-pins accelerate==1.12.0
+# which itself requires Python >= 3.10).
+#
+# Install both files together:
+#
+#   pip3 install -r requirements.txt -r requirements-pytorch.txt
+#
+# If you only want the low-RAM ONNX path (options 5/6), DO NOT install this
+# file — the base requirements.txt is enough and works on Python 3.9.
+# ============================================================================
+
+torch>=2.0.0
+transformers>=4.35.0
+accelerate>=1.10.0
+qwen-asr>=0.0.6
