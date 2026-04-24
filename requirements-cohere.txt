@@ -1,0 +1,42 @@
+# Cohere Transcribe Requirements - COMPATIBILITY FOCUSED
+# This version works with existing qwen-asr installation
+
+# CRITICAL: Use existing versions to avoid conflicts
+transformers==4.57.6  # EXACT match for qwen-asr compatibility
+torch>=1.13.0,<3.0.0  # Broader compatibility range
+torchaudio>=0.13.0,<3.0.0
+
+# Audio processing (compatible versions)
+soundfile>=0.12.1
+librosa>=0.9.0,<0.11.0  # Pin to avoid newer version issues
+resampy>=0.4.0
+
+# Core ML dependencies (existing compatible versions)
+huggingface_hub>=0.16.0,<0.26.0  # Avoid newest versions that may conflict
+tokenizers>=0.13.0,<0.16.0
+safetensors>=0.3.0
+
+# Text processing (keep existing compatible versions)
+sentencepiece>=0.1.97,<0.3.0
+protobuf>=3.19.0,<5.0.0  # Avoid v5 breaking changes
+
+# Utilities (conservative versions)
+requests>=2.25.0,<3.0.0
+psutil>=5.8.0
+packaging>=20.0
+
+# NumPy compatibility - use existing version
+# DO NOT upgrade numpy - causes conflicts
+numpy>=1.21.0,<2.1.0  # Allow current version, block problematic newer ones
+
+# SciPy (conservative range)
+scipy>=1.7.0,<1.14.0
+
+# Optional dependencies (commented out to avoid conflicts)
+# Uncomment only if needed and test individually
+
+# vLLM (only if specifically needed)
+# vllm>=0.8.0,<0.12.0
+
+# MLX (Apple Silicon only, only if specifically needed)
+# mlx-lm>=0.5.0

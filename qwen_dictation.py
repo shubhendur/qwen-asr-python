@@ -90,7 +90,7 @@ def _load_torch_and_tune_threads():
 # ==========================================
 # 1. CONFIGURATION & MODEL SELECTION
 # ==========================================
-print("--- Global Qwen3 / Parakeet / Voxtral / Whisper Voice-to-Text Utility ---")
+print("--- Global Qwen3 / Parakeet / Voxtral / Whisper / Cohere Voice-to-Text Utility ---")
 print("PyTorch backend (BF16/FP16, heavier RAM, full feature set):")
 print("  1. Qwen3-ASR-0.6B                       (~2.5–3 GB RAM)")
 print("  2. Qwen3-ASR-1.7B                       (~5–6 GB RAM)")
@@ -112,11 +112,15 @@ print(" 13. Whisper-Base (Balanced)            (~1-2 GB RAM, fast)")
 print(" 14. Whisper-Small (Desktop Standard)   (~2-3 GB RAM, good quality)")
 print(" 15. Whisper-Medium (High Quality)      (~3-5 GB RAM, better accuracy)")
 print(" 16. Whisper-Turbo (GPU Accelerated)    (~4-6 GB RAM, near-best quality)")
+print("Cohere Transcribe 03-2026 (2B params, 14 languages, top WER performance):")
+print(" 17. Cohere-2B — PyTorch (Standard)     (~3-4 GB RAM, cross-platform)")
+print(" 18. Cohere-2B — vLLM (Production)      (~4-6 GB RAM, server mode)")
+print(" 19. Cohere-2B — MLX (Apple Silicon)    (~2-3 GB RAM, M1/M2/M3/M4 only)")
 
-VALID_CHOICES = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'}
+VALID_CHOICES = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19'}
 
 try:
-    choice = input("Select Model Configuration (1-16): ").strip()
+    choice = input("Select Model Configuration (1-19): ").strip()
     if choice not in VALID_CHOICES:
         print("Invalid choice. Using default: Qwen3-ASR-0.6B INT4 ONNX")
         choice = '5'
@@ -128,9 +132,11 @@ use_onnx = choice in ['5', '6']
 use_parakeet = choice in ['7', '8']
 use_voxtral = choice in ['9', '10', '11']
 use_whisper = choice in ['12', '13', '14', '15', '16']
+use_cohere = choice in ['17', '18', '19']
 parakeet_flavour = None
 voxtral_backend = None
 whisper_model_size = None
+cohere_backend = None
 if choice == '7':
     parakeet_flavour = "mlx"
 elif choice == '8':
@@ -153,6 +159,13 @@ elif choice == '15':
     whisper_model_size = "medium"
 elif choice == '16':
     whisper_model_size = "large-v3-turbo"
+
+if choice == '17':
+    cohere_backend = "pytorch"
+elif choice == '18':
+    cohere_backend = "vllm"
+elif choice == '19':
+    cohere_backend = "mlx"
 
 # Hard-fail early if the user picks the MLX option on a non-Apple-Silicon box.
 if choice == '7':
@@ -190,6 +203,16 @@ elif choice == '10':
         print()
         print("[Error] Option 10 (Voxtral MLX) requires Apple Silicon (M1/M2/M3/M4).")
         print("        Pick option 9 (vLLM) for GPU or option 11 (ExecuTorch) for CPU.")
+        sys.exit(1)
+
+# Cohere compatibility checks
+if choice == '19':
+    # MLX backend is Apple Silicon only
+    from cohere_transcribe_backend import is_apple_silicon as _is_apple_silicon_cohere
+    if not _is_apple_silicon_cohere():
+        print()
+        print("[Error] Option 19 (Cohere MLX) requires Apple Silicon (M1/M2/M3/M4).")
+        print("        Pick option 17 (PyTorch) for CPU/GPU or option 18 (vLLM) for production serving.")
         sys.exit(1)
 
 # Language prompt for text-only transcription. Forced-aligner options (3/4)
@@ -259,6 +282,25 @@ elif use_whisper:
     except KeyboardInterrupt:
         print("\n[System] Exiting...")
         sys.exit(0)
+elif use_cohere:
+    # Cohere supports 14 languages with excellent accuracy (WER leader)
+    try:
+        print("Cohere Transcribe supports 14 languages with top accuracy (WER 5.42).")
+        print("Languages: English, French, German, Italian, Spanish, Portuguese,")
+        print("Greek, Dutch, Polish, Chinese (Mandarin), Japanese, Korean, Vietnamese, Arabic")
+        lang_choice = input(
+            "Select Language (1: English, 2: French, 3: German, 4: Spanish, 5: Chinese, 6: Auto-detect): "
+        ).strip()
+        lang_map = {
+            '1': 'en', '2': 'fr', '3': 'de', '4': 'es', '5': 'zh', '6': None
+        }
+        lang_code = lang_map.get(lang_choice, None)
+        if lang_choice not in lang_map:
+            print("Invalid language choice. Using auto-detect.")
+            lang_code = None
+    except KeyboardInterrupt:
+        print("\n[System] Exiting...")
+        sys.exit(0)
 
 use_pytorch = choice in ['1', '2', '3', '4']
 
@@ -300,6 +342,7 @@ onnx_pipe = None       # Qwen3AsrOnnx instance when use_onnx is True
 parakeet_pipe = None   # ParakeetAsr instance when use_parakeet is True
 voxtral_pipe = None    # Voxtral backend instance when use_voxtral is True
 whisper_pipe = None    # Whisper backend instance when use_whisper is True
+cohere_pipe = None     # Cohere backend instance when use_cohere is True
 
 if use_parakeet:
     # -------------------- Parakeet TDT v3 (options 7, 8) -----------------
@@ -454,6 +497,60 @@ elif use_whisper:
         print(f"[System] Whisper warmup complete ({time.time() - t0:.1f}s).")
     except Exception as e:
         print(f"[System] Whisper warmup skipped ({e}). First transcription may be slower.")
+
+elif use_cohere:
+    # -------------------- Cohere backend (options 17-19) ----------------
+    from cohere_transcribe_backend import create_cohere_backend
+
+    print(f"\n[System] Initializing Cohere Transcribe 03-2026 ({cohere_backend.upper()})...")
+    print(f"[System] 2B parameters, 14 languages, WER leader (5.42)")
+    print(f"[System] First run downloads ~7-8 GB; cached afterwards.")
+
+    try:
+        backend_kwargs = {}
+
+        if cohere_backend == "pytorch":
+            backend_kwargs["device"] = "auto"
+            backend_kwargs["enable_optimizations"] = True
+            memory_estimate = "3-4 GB"
+        elif cohere_backend == "vllm":
+            backend_kwargs["start_server"] = True
+            backend_kwargs["server_timeout"] = 120
+            memory_estimate = "4-6 GB"
+        elif cohere_backend == "mlx":
+            memory_estimate = "2-3 GB"
+
+        cohere_pipe = create_cohere_backend(cohere_backend, **backend_kwargs)
+
+        # Set global variables for consistency
+        MODEL_ID = f"CohereLabs/cohere-transcribe-03-2026 ({cohere_backend.upper()})"
+        if hasattr(cohere_pipe, 'device'):
+            DEVICE = cohere_pipe.device
+        else:
+            DEVICE = "auto"
+
+        print(f"[System] Cohere pipeline loaded successfully.")
+        print(f"[System] Backend: {cohere_backend.upper()}")
+        print(f"[System] Device: {DEVICE}")
+        print(f"[System] Memory estimate: {memory_estimate}")
+
+    except ImportError as e:
+        print(f"[Error] {e}")
+        print("[Info] Install Cohere dependencies with: pip install -r requirements-cohere.txt")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[Error] Failed to load Cohere pipeline: {e}")
+        sys.exit(1)
+
+    # Cohere warmup with short audio clip
+    try:
+        print("[System] Running Cohere warmup inference...")
+        t0 = time.time()
+        warmup_audio = np.zeros(8000, dtype=np.float32)  # 0.5 seconds of silence
+        cohere_pipe.transcribe(warmup_audio)
+        print(f"[System] Cohere warmup complete ({time.time() - t0:.1f}s).")
+    except Exception as e:
+        print(f"[System] Cohere warmup skipped ({e}). First transcription may be slower.")
 
 elif use_onnx:
     # -------------------- ONNX backend (options 5, 6) --------------------
@@ -715,6 +812,15 @@ def _transcribe_whisper(audio_np: np.ndarray, language: str | None) -> str:
     return result.text.strip()
 
 
+def _transcribe_cohere(audio_np: np.ndarray, language: str | None) -> str:
+    """Run a single transcription through the Cohere backend."""
+    # Cohere expects language codes (en, fr, de, etc.) or None for auto-detect
+    # Language is already in the correct format from the menu selection
+
+    result = cohere_pipe.transcribe(audio_np, language=language)
+    return result.text.strip()
+
+
 def process_and_type(audio_np):
     global is_processing
     try:
@@ -731,6 +837,8 @@ def process_and_type(audio_np):
                 transcription = _transcribe_voxtral(audio_np, language)
             elif use_whisper:
                 transcription = _transcribe_whisper(audio_np, language)
+            elif use_cohere:
+                transcription = _transcribe_cohere(audio_np, language)
             elif use_onnx:
                 transcription = _transcribe_onnx(audio_np, language)
             else:
