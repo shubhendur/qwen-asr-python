@@ -1,0 +1,53 @@
+# Voxtral-Mini-4B-Realtime-2602 ASR Backend Requirements
+# Install with: pip install -r requirements-voxtral.txt
+#
+# This file contains dependencies for all three Voxtral backends:
+# - Option 9: vLLM backend (GPU-optimized)
+# - Option 10: MLX backend (Apple Silicon optimized)
+# - Option 11: ExecuTorch backend (CPU lightweight)
+
+# Core dependencies (required for all backends)
+numpy>=1.21.0
+huggingface_hub>=0.16.0
+tokenizers>=0.13.0
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# vLLM backend (Option 9) - GPU-accelerated inference
+vllm>=0.2.0
+openai>=1.0.0                # For vLLM API client
+transformers>=4.35.0         # Required by vLLM for model loading
+torch>=2.0.0                 # Base PyTorch (will be upgraded by vLLM if needed)
+
+# MLX backend (Option 10) - Apple Silicon only
+mlx>=0.15.0; sys_platform == "darwin" and platform_machine == "arm64"
+
+# ExecuTorch backend (Option 11) - CPU-optimized transformers backend
+# Updated to use CPU-optimized transformers with quantization
+torch>=2.0.0                 # Base PyTorch with quantization support
+transformers>=4.35.0         # Required for Voxtral model support
+accelerate>=0.20.0           # Model loading and memory optimizations
+optimum[intel]>=1.9.0; sys_platform != "darwin"  # Intel CPU optimizations (Windows/Linux)
+safetensors>=0.3.0           # Optimized model serialization
+
+# Optional performance monitoring
+psutil>=5.8.0               # For resource usage monitoring
+
+# Audio processing optimization
+soxr>=0.3.0                 # High-quality audio resampling (optional)
+
+# Platform-specific optimizations
+
+# Windows Intel optimizations
+# mkl>=2022.0; sys_platform == "win32"              # Intel MKL (usually comes with PyTorch)
+
+# macOS optimizations (all Mac systems)
+# No additional requirements - uses built-in Accelerate framework
+
+# Linux optimizations
+# intel-openmp>=2022.0; sys_platform == "linux"    # Intel OpenMP (optional)
+
+# Development and testing
+# pytest>=7.0.0            # For running tests
+# black>=22.0.0            # Code formatting
+# mypy>=0.991              # Type checking

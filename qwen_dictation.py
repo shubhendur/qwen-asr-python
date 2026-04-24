@@ -90,7 +90,7 @@ def _load_torch_and_tune_threads():
 # ==========================================
 # 1. CONFIGURATION & MODEL SELECTION
 # ==========================================
-print("--- Global Qwen3 / Parakeet Voice-to-Text Utility ---")
+print("--- Global Qwen3 / Parakeet / Voxtral / Whisper Voice-to-Text Utility ---")
 print("PyTorch backend (BF16/FP16, heavier RAM, full feature set):")
 print("  1. Qwen3-ASR-0.6B                       (~2.5–3 GB RAM)")
 print("  2. Qwen3-ASR-1.7B                       (~5–6 GB RAM)")
@@ -102,11 +102,21 @@ print("  6. Qwen3-ASR-1.7B INT4 ONNX             (~1.2–1.5 GB RAM)")
 print("Parakeet TDT 0.6B v3 (English + 24 European langs, Hindi NOT supported):")
 print("  7. Parakeet TDT v3 — MLX BF16           (~1.3–2 GB RAM, Apple Silicon only)")
 print("  8. Parakeet TDT v3 — ONNX INT8          (~2 GB RAM, cross-platform CPU)")
+print("Voxtral-4B Realtime (13 languages, real-time streaming ASR):")
+print("  9. Voxtral-4B — vLLM Realtime          (~8 GB RAM, GPU required)")
+print(" 10. Voxtral-4B — MLX Optimized          (~4 GB RAM, Apple Silicon)")
+print(" 11. Voxtral-4B — ExecuTorch Lite        (~2 GB RAM, CPU-only)")
+print("Whisper ASR (OpenAI, 99 languages, excellent accuracy):")
+print(" 12. Whisper-Tiny (CPU Optimized)       (~1 GB RAM, fastest)")
+print(" 13. Whisper-Base (Balanced)            (~1-2 GB RAM, fast)")
+print(" 14. Whisper-Small (Desktop Standard)   (~2-3 GB RAM, good quality)")
+print(" 15. Whisper-Medium (High Quality)      (~3-5 GB RAM, better accuracy)")
+print(" 16. Whisper-Turbo (GPU Accelerated)    (~4-6 GB RAM, near-best quality)")
 
-VALID_CHOICES = {'1', '2', '3', '4', '5', '6', '7', '8'}
+VALID_CHOICES = {'1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'}
 
 try:
-    choice = input("Select Model Configuration (1-8): ").strip()
+    choice = input("Select Model Configuration (1-16): ").strip()
     if choice not in VALID_CHOICES:
         print("Invalid choice. Using default: Qwen3-ASR-0.6B INT4 ONNX")
         choice = '5'
@@ -116,11 +126,33 @@ except KeyboardInterrupt:
 
 use_onnx = choice in ['5', '6']
 use_parakeet = choice in ['7', '8']
+use_voxtral = choice in ['9', '10', '11']
+use_whisper = choice in ['12', '13', '14', '15', '16']
 parakeet_flavour = None
+voxtral_backend = None
+whisper_model_size = None
 if choice == '7':
     parakeet_flavour = "mlx"
 elif choice == '8':
     parakeet_flavour = "onnx-int8"
+
+if choice == '9':
+    voxtral_backend = "vllm"
+elif choice == '10':
+    voxtral_backend = "mlx"
+elif choice == '11':
+    voxtral_backend = "executorch"
+
+if choice == '12':
+    whisper_model_size = "tiny"
+elif choice == '13':
+    whisper_model_size = "base"
+elif choice == '14':
+    whisper_model_size = "small"
+elif choice == '15':
+    whisper_model_size = "medium"
+elif choice == '16':
+    whisper_model_size = "large-v3-turbo"
 
 # Hard-fail early if the user picks the MLX option on a non-Apple-Silicon box.
 if choice == '7':
@@ -131,10 +163,40 @@ if choice == '7':
         print("        Pick option 8 (Parakeet ONNX INT8) — works on any CPU.")
         sys.exit(1)
 
+# Voxtral compatibility checks
+if choice == '9':
+    # vLLM backend requires significant GPU memory
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total_memory = torch.cuda.get_device_properties(0).total_memory
+            if total_memory < 14 * 1024**3:  # 14GB minimum
+                print()
+                print("[Warning] Option 9 (Voxtral vLLM) requires 16GB+ GPU memory.")
+                print("          You have {:.1f}GB. Consider option 10/11 for lower memory usage.".format(total_memory / 1024**3))
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            print("[Info] Using Apple Silicon unified memory for Voxtral vLLM.")
+        else:
+            print()
+            print("[Warning] Option 9 (Voxtral vLLM) works best with GPU acceleration.")
+            print("          Consider option 11 (ExecuTorch) for CPU-only usage.")
+    except ImportError:
+        pass
+
+elif choice == '10':
+    # MLX backend is Apple Silicon only
+    from parakeet_backend import is_apple_silicon as _is_apple_silicon
+    if not _is_apple_silicon():
+        print()
+        print("[Error] Option 10 (Voxtral MLX) requires Apple Silicon (M1/M2/M3/M4).")
+        print("        Pick option 9 (vLLM) for GPU or option 11 (ExecuTorch) for CPU.")
+        sys.exit(1)
+
 # Language prompt for text-only transcription. Forced-aligner options (3/4)
 # need free-form output so they skip this. Parakeet v3 doesn't support Hindi
 # but is happy with English + 24 European languages, so options 7/8 only get
-# the English/Other menu.
+# the English/Other menu. Voxtral supports 13 languages including Hindi and CJK.
+# Whisper supports 99 languages with excellent multilingual performance.
 lang_code = None
 if choice in ['1', '2', '5', '6']:
     try:
@@ -155,6 +217,45 @@ elif use_parakeet:
             "Select Language (1: English, 2: Other European — auto-detect): "
         ).strip()
         lang_code = "en" if lang_choice == '1' else None
+    except KeyboardInterrupt:
+        print("\n[System] Exiting...")
+        sys.exit(0)
+elif use_voxtral:
+    # Voxtral supports 13 languages with auto-detection
+    try:
+        print("Voxtral supports: Arabic, German, English, Spanish, French, Hindi,")
+        print("Italian, Dutch, Portuguese, Chinese, Japanese, Korean, Russian")
+        lang_choice = input(
+            "Select Language (1: English, 2: Hindi, 3: Auto-detect from 13 languages): "
+        ).strip()
+        if lang_choice == '1':
+            lang_code = "en"
+        elif lang_choice == '2':
+            lang_code = "hi"
+        else:
+            lang_code = None  # Auto-detect
+        if lang_choice not in ['1', '2', '3']:
+            print("Invalid language choice. Using auto-detect.")
+            lang_code = None
+    except KeyboardInterrupt:
+        print("\n[System] Exiting...")
+        sys.exit(0)
+elif use_whisper:
+    # Whisper supports 99 languages with excellent multilingual performance
+    try:
+        print("Whisper supports 99 languages with excellent accuracy.")
+        print("Popular languages: English, Hindi, Spanish, French, German, Italian,")
+        print("Portuguese, Russian, Japanese, Korean, Chinese, Arabic, Dutch, etc.")
+        lang_choice = input(
+            "Select Language (1: English, 2: Hindi, 3: Spanish, 4: French, 5: German, 6: Auto-detect): "
+        ).strip()
+        lang_map = {
+            '1': 'en', '2': 'hi', '3': 'es', '4': 'fr', '5': 'de', '6': None
+        }
+        lang_code = lang_map.get(lang_choice, None)
+        if lang_choice not in lang_map:
+            print("Invalid language choice. Using auto-detect.")
+            lang_code = None
     except KeyboardInterrupt:
         print("\n[System] Exiting...")
         sys.exit(0)
@@ -197,6 +298,8 @@ MODEL_ID = None
 model = None
 onnx_pipe = None       # Qwen3AsrOnnx instance when use_onnx is True
 parakeet_pipe = None   # ParakeetAsr instance when use_parakeet is True
+voxtral_pipe = None    # Voxtral backend instance when use_voxtral is True
+whisper_pipe = None    # Whisper backend instance when use_whisper is True
 
 if use_parakeet:
     # -------------------- Parakeet TDT v3 (options 7, 8) -----------------
@@ -243,6 +346,114 @@ if use_parakeet:
         print(f"[System] Warmup complete ({time.time() - t0:.1f}s).")
     except Exception as e:
         print(f"[System] Warmup skipped ({e}). First transcription may be slower.")
+
+elif use_voxtral:
+    # -------------------- Voxtral backend (options 9, 10, 11) ----------------
+    print(f"\n[System] Initializing Voxtral-4B Realtime ({voxtral_backend.upper()})...")
+
+    if voxtral_backend == "vllm":
+        print("[System] First run downloads ~17.7 GB; requires ~8GB GPU memory.")
+        from voxtral_vllm_backend import VoxtralVllmBackend
+        try:
+            voxtral_pipe = VoxtralVllmBackend(delay_ms=480)  # Balanced default
+            DEVICE = "cuda" if torch and torch.cuda.is_available() else "mps" if torch and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() else "cpu"
+            MODEL_ID = "mistralai/Voxtral-Mini-4B-Realtime-2602 (vLLM)"
+        except ImportError as e:
+            print(f"[Error] {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[Error] Failed to load Voxtral vLLM backend: {e}")
+            sys.exit(1)
+
+    elif voxtral_backend == "mlx":
+        print("[System] First run downloads ~17.7 GB; optimized for Apple Silicon.")
+        from voxtral_mlx_backend import VoxtralMlxBackend
+        try:
+            voxtral_pipe = VoxtralMlxBackend(delay_ms=480, memory_limit_gb=4)
+            DEVICE = "mps"
+            MODEL_ID = "mistralai/Voxtral-Mini-4B-Realtime-2602 (MLX)"
+        except ImportError as e:
+            print(f"[Error] {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[Error] Failed to load Voxtral MLX backend: {e}")
+            sys.exit(1)
+
+    elif voxtral_backend == "executorch":
+        print("[System] First run downloads ~17.7 GB; CPU-optimized for minimal resources.")
+        from voxtral_executorch_backend import VoxtralExecuTorchBackend
+        try:
+            num_threads = 8 if platform.system() == "Windows" else 6 if platform.system() != "Darwin" else 0
+            voxtral_pipe = VoxtralExecuTorchBackend(num_threads=num_threads, memory_limit_mb=2048)
+            DEVICE = "cpu"
+            MODEL_ID = "mistralai/Voxtral-Mini-4B-Realtime-2602 (ExecuTorch)"
+        except ImportError as e:
+            print(f"[Error] {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"[Error] Failed to load Voxtral ExecuTorch backend: {e}")
+            sys.exit(1)
+
+    print(f"[System] Voxtral {voxtral_backend.upper()} pipeline loaded successfully.")
+
+    # Warmup inference for Voxtral
+    try:
+        print("[System] Running Voxtral warmup inference...")
+        t0 = time.time()
+        warmup_audio = np.zeros(16000, dtype=np.float32)  # 1 second of silence
+        voxtral_pipe.transcribe(warmup_audio)
+        print(f"[System] Voxtral warmup complete ({time.time() - t0:.1f}s).")
+    except Exception as e:
+        print(f"[System] Voxtral warmup skipped ({e}). First transcription may be slower.")
+
+elif use_whisper:
+    # -------------------- Whisper backend (options 12-16) ----------------
+    from whisper_pytorch_backend import WhisperPyTorchBackend, WHISPER_MODELS
+
+    model_info = WHISPER_MODELS[whisper_model_size]
+    print(f"\n[System] Initializing Whisper {model_info['params']} ({whisper_model_size})...")
+    print(f"[System] {model_info['description']}")
+    print(f"[System] First run downloads ~1-18 GB depending on model size; cached afterwards.")
+
+    try:
+        whisper_pipe = WhisperPyTorchBackend(
+            model_size=whisper_model_size,
+            device="auto",  # Automatic device detection and optimization
+            enable_optimizations=True
+        )
+
+        # Set global variables for consistency
+        MODEL_ID = model_info['repo_id']
+        DEVICE = whisper_pipe.device
+        TORCH_DTYPE = whisper_pipe.torch_dtype
+
+        print(f"[System] Whisper pipeline loaded successfully.")
+        print(f"[System] Model: {MODEL_ID}")
+        print(f"[System] Device: {DEVICE}, Dtype: {TORCH_DTYPE}")
+
+        # Display system resource information
+        system_info = whisper_pipe.get_system_resources()
+        if "error" not in system_info:
+            print(f"[System] Available memory: {system_info.get('memory_available_gb', 0):.1f}GB")
+            print(f"[System] Expected usage: ~{model_info['memory_gb']}GB")
+
+    except ImportError as e:
+        print(f"[Error] {e}")
+        print("[Info] Install Whisper dependencies with: pip install -r requirements-whisper.txt")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[Error] Failed to load Whisper pipeline: {e}")
+        sys.exit(1)
+
+    # Whisper warmup with short audio clip
+    try:
+        print("[System] Running Whisper warmup inference...")
+        t0 = time.time()
+        warmup_audio = np.zeros(8000, dtype=np.float32)  # 0.5 seconds of silence
+        whisper_pipe.transcribe(warmup_audio)
+        print(f"[System] Whisper warmup complete ({time.time() - t0:.1f}s).")
+    except Exception as e:
+        print(f"[System] Whisper warmup skipped ({e}). First transcription may be slower.")
 
 elif use_onnx:
     # -------------------- ONNX backend (options 5, 6) --------------------
@@ -479,6 +690,31 @@ def _transcribe_parakeet(audio_np: np.ndarray, language: str | None) -> str:
     return result.text.strip()
 
 
+def _transcribe_voxtral(audio_np: np.ndarray, language: str | None) -> str:
+    """Run a single transcription through the Voxtral backend."""
+    # Convert language codes to full names that Voxtral expects
+    lang_full_name = None
+    if language == "en":
+        lang_full_name = "English"
+    elif language == "hi":
+        lang_full_name = "Hindi"
+    elif language:
+        # Pass through other language names as-is
+        lang_full_name = language
+
+    result = voxtral_pipe.transcribe(audio_np, language=lang_full_name)
+    return result.text.strip()
+
+
+def _transcribe_whisper(audio_np: np.ndarray, language: str | None) -> str:
+    """Run a single transcription through the Whisper backend."""
+    # Whisper expects language codes (en, hi, es, etc.) or None for auto-detect
+    # Language is already in the correct format from the menu selection
+
+    result = whisper_pipe.transcribe(audio_np, language=language)
+    return result.text.strip()
+
+
 def process_and_type(audio_np):
     global is_processing
     try:
@@ -491,6 +727,10 @@ def process_and_type(audio_np):
         try:
             if use_parakeet:
                 transcription = _transcribe_parakeet(audio_np, language)
+            elif use_voxtral:
+                transcription = _transcribe_voxtral(audio_np, language)
+            elif use_whisper:
+                transcription = _transcribe_whisper(audio_np, language)
             elif use_onnx:
                 transcription = _transcribe_onnx(audio_np, language)
             else:

@@ -46,7 +46,7 @@ def _maybe_relaunch_in_venv() -> None:
 
 _maybe_relaunch_in_venv()
 
-print("--- Qwen3 / Parakeet Model Downloader ---")
+print("--- Qwen3 / Parakeet / Voxtral / Whisper Model Downloader ---")
 print("PyTorch (qwen-asr) — heavier RAM, full feature set:")
 print("  1. Qwen3-ASR-0.6B                        (~1.2 GB download, ~2.5–3 GB RAM)")
 print("  2. Qwen3-ASR-1.7B                        (~4.5 GB download, ~5–6 GB RAM)")
@@ -58,10 +58,20 @@ print("  6. Qwen3-ASR-1.7B INT4 ONNX              (~4.0 GB download, ~1.2–1.5 
 print("Parakeet TDT 0.6B v3 (English + 24 European langs):")
 print("  7. Parakeet TDT v3 — MLX BF16            (~2.5 GB download, Apple Silicon only)")
 print("  8. Parakeet TDT v3 — ONNX INT8           (~671 MB download, cross-platform)")
+print("Voxtral-4B Realtime (13 languages, real-time streaming ASR):")
+print("  9. Voxtral-4B — vLLM Realtime           (~17.7 GB download, GPU required)")
+print(" 10. Voxtral-4B — MLX Optimized           (~17.7 GB download, Apple Silicon)")
+print(" 11. Voxtral-4B — ExecuTorch Lite         (~17.7 GB download, CPU-only)")
+print("Whisper ASR (OpenAI, 99 languages, excellent accuracy):")
+print(" 12. Whisper-Tiny (CPU Optimized)        (~39 MB download, ~1 GB RAM)")
+print(" 13. Whisper-Base (Balanced)             (~142 MB download, ~1-2 GB RAM)")
+print(" 14. Whisper-Small (Desktop Standard)    (~967 MB download, ~2-3 GB RAM)")
+print(" 15. Whisper-Medium (High Quality)       (~3.1 GB download, ~3-5 GB RAM)")
+print(" 16. Whisper-Turbo (GPU Accelerated)     (~1.6 GB download, ~4-6 GB RAM)")
 
 try:
-    choice = input("Select Model Configuration to download (1-8): ").strip()
-    if choice not in {"1", "2", "3", "4", "5", "6", "7", "8"}:
+    choice = input("Select Model Configuration to download (1-16): ").strip()
+    if choice not in {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"}:
         print("Invalid choice. Using default: Qwen3-ASR-0.6B INT4 ONNX")
         choice = "5"
 except KeyboardInterrupt:
@@ -198,13 +208,179 @@ def _download_parakeet(choice: str) -> None:
         print("   Runtime : onnxruntime + onnx-asr (CPUExecutionProvider, INT8)")
 
 
+def _download_voxtral(choice: str) -> None:
+    """Download Voxtral-4B model for the specified backend and smoke-test it."""
+    import numpy as np
+
+    # Map choices to backends
+    backend_map = {
+        "9": ("vllm", "Voxtral vLLM"),
+        "10": ("mlx", "Voxtral MLX"),
+        "11": ("executorch", "Voxtral ExecuTorch")
+    }
+
+    backend_type, backend_name = backend_map[choice]
+
+    # Platform compatibility checks
+    if backend_type == "mlx":
+        from parakeet_backend import is_apple_silicon
+        if not is_apple_silicon():
+            print("[Error] Option 10 (Voxtral MLX) requires Apple Silicon (M1/M2/M3/M4).")
+            print("        On Intel/AMD pick option 9 (vLLM) or 11 (ExecuTorch) instead.")
+            sys.exit(1)
+
+    print(f"\nWill download: mistralai/Voxtral-Mini-4B-Realtime-2602 ({backend_name}).")
+    print("This is a large model (~17.7 GB) and may take significant time.\n")
+
+    try:
+        if backend_type == "vllm":
+            from voxtral_vllm_backend import download_voxtral_vllm
+            cache_dir = download_voxtral_vllm()
+            print("Loading Voxtral vLLM backend to verify...")
+            from voxtral_vllm_backend import VoxtralVllmBackend
+            backend = VoxtralVllmBackend(delay_ms=480)
+
+        elif backend_type == "mlx":
+            from voxtral_mlx_backend import download_voxtral_mlx
+            cache_dir = download_voxtral_mlx()
+            print("Loading Voxtral MLX backend to verify...")
+            from voxtral_mlx_backend import VoxtralMlxBackend
+            backend = VoxtralMlxBackend(delay_ms=480, memory_limit_gb=4)
+
+        elif backend_type == "executorch":
+            from voxtral_executorch_backend import download_voxtral_executorch
+            cache_dir = download_voxtral_executorch()
+            print("Loading Voxtral ExecuTorch backend to verify...")
+            from voxtral_executorch_backend import VoxtralExecuTorchBackend
+            backend = VoxtralExecuTorchBackend(num_threads=4, memory_limit_mb=2048)
+
+        print(f"[OK] Voxtral model cached at: {cache_dir}")
+
+        # Smoke test with short silence
+        print("Running smoke test...")
+        test_audio = np.zeros(8000, dtype=np.float32)  # 0.5 seconds
+        result = backend.transcribe(test_audio, language="English")
+
+        print("[OK] Voxtral backend loaded and verified successfully!")
+        print(f"   Backend : {backend_name}")
+        print(f"   Path    : {cache_dir}")
+        print(f"   Model   : mistralai/Voxtral-Mini-4B-Realtime-2602")
+        if backend_type == "vllm":
+            print("   Runtime : vLLM (GPU-accelerated, real-time streaming)")
+        elif backend_type == "mlx":
+            print("   Runtime : MLX (Apple Silicon optimized, unified memory)")
+        else:
+            print("   Runtime : ExecuTorch (CPU-optimized, minimal resources)")
+
+        # Clean up backend resources
+        if hasattr(backend, 'close'):
+            backend.close()
+
+    except ImportError as e:
+        print(f"[Error] Missing dependencies for {backend_name}: {e}")
+        print("       Run: pip install -r requirements-voxtral.txt")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[Error] Failed to verify {backend_name}: {e}")
+        sys.exit(1)
+
+
+def _download_whisper(choice: str) -> None:
+    """Download Whisper model for the specified size and smoke-test it."""
+    from whisper_pytorch_backend import WhisperPyTorchBackend, WHISPER_MODELS, download_whisper_model
+    import numpy as np
+
+    # Map choices to model sizes
+    model_size_map = {
+        "12": "tiny",
+        "13": "base",
+        "14": "small",
+        "15": "medium",
+        "16": "large-v3-turbo"
+    }
+
+    model_size = model_size_map[choice]
+    model_config = WHISPER_MODELS[model_size]
+
+    print(f"\nWill download: {model_config['repo_id']} ({model_config['params']} parameters).")
+    print(f"Description: {model_config['description']}")
+    print(f"Expected download size varies by model. This may take several minutes.\n")
+
+    try:
+        # Download the model
+        cache_dir = download_whisper_model(model_size)
+        print(f"[OK] Whisper model cached at: {cache_dir}")
+
+        # Load and verify the backend
+        print(f"Loading Whisper {model_size} backend to verify...")
+        backend = WhisperPyTorchBackend(
+            model_size=model_size,
+            device="auto",
+            enable_optimizations=True
+        )
+
+        # Get system and model information
+        model_info = backend.get_model_info()
+        system_resources = backend.get_system_resources()
+
+        print(f"[OK] Whisper {model_size} backend loaded successfully!")
+        print(f"   Model     : {model_info['model_size']} ({model_info['parameters']})")
+        print(f"   Repository: {model_info['repository']}")
+        print(f"   Device    : {model_info['device']}")
+        print(f"   Dtype     : {model_info['dtype']}")
+        print(f"   Batch size: {model_info['batch_size']}")
+
+        if "error" not in system_resources:
+            memory_used = system_resources.get('process_memory_gb', 0)
+            memory_available = system_resources.get('memory_available_gb', 0)
+            print(f"   Memory    : {memory_used:.1f}GB used, {memory_available:.1f}GB available")
+
+        # Smoke test with short audio
+        print("Running smoke test...")
+        test_audio = np.zeros(8000, dtype=np.float32)  # 0.5 seconds of silence
+        result = backend.transcribe(test_audio, language="en")
+
+        print("[OK] Smoke test completed successfully!")
+
+        # Show optimization information
+        optimizations = []
+        if model_info.get('optimizations_enabled'):
+            optimizations.append("Platform optimizations")
+        if hasattr(backend, '_torch_compile_available') and backend._torch_compile_available():
+            optimizations.append("torch.compile available")
+        if hasattr(backend, '_flash_attention_available') and backend._flash_attention_available():
+            optimizations.append("Flash Attention 2")
+
+        if optimizations:
+            print(f"   Features  : {', '.join(optimizations)}")
+
+        print(f"\nWhisper {model_size} is ready for use with options 12-16 in qwen_dictation.py")
+
+        # Clean up
+        backend.cleanup()
+
+    except ImportError as e:
+        print(f"[Error] Missing Whisper dependencies: {e}")
+        print("       Run: pip install -r requirements-whisper.txt")
+        sys.exit(1)
+    except Exception as e:
+        print(f"[Error] Failed to verify Whisper {model_size}: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
 try:
     if choice in {"1", "2", "3", "4"}:
         _download_pytorch(choice)
     elif choice in {"5", "6"}:
         _download_onnx(choice)
-    else:
+    elif choice in {"7", "8"}:
         _download_parakeet(choice)
+    elif choice in {"9", "10", "11"}:
+        _download_voxtral(choice)
+    else:  # choices 12, 13, 14, 15, 16
+        _download_whisper(choice)
 except Exception as e:
     print(f"[Error] {e}")
     import traceback

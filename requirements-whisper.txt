@@ -1,0 +1,66 @@
+# OpenAI Whisper Multi-Model Backend Requirements
+# Install with: pip install -r requirements-whisper.txt
+#
+# This file contains dependencies for the Whisper PyTorch backend supporting:
+# - Five model sizes: tiny, base, small, medium, large-v3-turbo
+# - Platform optimizations for Windows 11 Intel i7 13th gen and Mac M1 Pro
+# - Advanced features: torch.compile, Flash Attention 2, chunked processing
+# - Resource monitoring and automatic optimization
+
+# Core Whisper dependencies
+transformers>=4.35.0           # Whisper model support and pipeline
+torch>=2.1.0                   # PyTorch with SDPA, torch.compile support
+torchaudio>=2.1.0              # Audio processing utilities
+datasets[audio]>=2.14.0        # Audio dataset utilities and processors
+
+# Audio processing
+librosa>=0.10.0                # High-quality audio processing
+soundfile>=0.12.0              # Audio file I/O
+numpy>=1.21.0                  # Numerical operations
+
+# HuggingFace ecosystem
+huggingface_hub>=0.16.0        # Model downloading and caching
+tokenizers>=0.13.0             # Fast tokenization
+safetensors>=0.3.0             # Optimized model serialization
+accelerate>=0.20.0             # Model loading optimizations
+
+# Performance monitoring and optimization
+psutil>=5.9.0                  # System resource monitoring
+
+# Advanced optimizations (optional but recommended)
+flash-attn>=2.0.0; python_version >= "3.8"  # Flash Attention 2 (GPU acceleration)
+# Note: flash-attn requires compatible GPU and may need: pip install flash-attn --no-build-isolation
+
+# Platform-specific optimizations
+
+# Intel optimizations (Windows/Linux)
+# mkl>=2022.0; sys_platform != "darwin"                    # Intel MKL (usually comes with PyTorch)
+# intel-openmp>=2022.0; sys_platform == "linux"           # Intel OpenMP (Linux)
+
+# Apple Silicon optimizations (macOS)
+# No additional requirements - uses built-in Accelerate framework and MPS
+
+# Optional dependencies for advanced features
+
+# ONNX support (for future whisper_onnx_backend.py)
+# onnxruntime>=1.15.0          # ONNX Runtime
+# onnxruntime-gpu>=1.15.0      # ONNX Runtime with GPU support
+
+# Additional audio formats support
+# ffmpeg-python>=0.2.0         # FFmpeg integration for more audio formats
+# pydub>=0.25.0                # Audio manipulation utilities
+
+# Development and testing dependencies (optional)
+# pytest>=7.0.0                # Unit testing
+# pytest-benchmark>=4.0.0      # Performance benchmarking
+# black>=22.0.0                 # Code formatting
+# mypy>=1.0.0                   # Type checking
+
+# Memory optimization utilities
+# py-spy>=0.3.0                # Performance profiling (optional)
+# memory-profiler>=0.60.0      # Memory usage profiling (optional)
+
+# Jupyter notebook support (optional)
+# ipython>=8.0.0               # Interactive Python
+# jupyter>=1.0.0               # Jupyter notebooks
+# matplotlib>=3.5.0            # Plotting for analysis
