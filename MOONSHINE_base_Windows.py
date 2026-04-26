@@ -148,6 +148,7 @@ class MoonshineApp:
         self.is_recording = False
         self.audio_chunks = []
         self.model = None
+        self.stream = None
 
         self._ensure_model_downloaded()
         self.model = MoonshineModel(LOCAL_MODEL_DIR)
@@ -184,12 +185,20 @@ class MoonshineApp:
             return
         self.is_recording = True
         self.audio_chunks = []
+        self.stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32', callback=self.audio_callback)
+        self.stream.start()
         print("\r[RECORDING] Dictate now... (Release Right Alt to stop)          ", end="", flush=True)
 
     def stop_recording(self):
         if not self.is_recording:
             return
         self.is_recording = False
+        
+        if self.stream is not None:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+
         print("\r[PROCESSING] Transcribing...                                     ", end="", flush=True)
 
         if not self.audio_chunks:
@@ -227,11 +236,8 @@ class MoonshineApp:
         print("Release to transcribe. Press 'Esc' to exit.")
         print("=" * 50 + "\n")
 
-        # Open audio stream once globally to avoid startup lag on hotkey
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32',
-                            callback=self.audio_callback):
-            with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
-                listener.join()
+        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+            listener.join()
 
 
 if __name__ == "__main__":
