@@ -1,4 +1,5 @@
 """
+This will be automatically added in a start up, by the function add_to_startup() Which is located at the end of this file. 
 Moonshine Base ASR — Push-to-Talk Speech-to-Text
 Uses ONNX Runtime with INT8 quantized weights for minimal CPU/RAM usage.
 No PyTorch, no transformers library — only lightweight dependencies.
@@ -199,11 +200,11 @@ class MoonshineApp:
             self.stream.close()
             self.stream = None
 
-        print("\r[PROCESSING] Transcribing...                                     ", end="", flush=True)
+        # print("\r[PROCESSING] Transcribing...                                     ", end="", flush=True)
 
-        if not self.audio_chunks:
-            print("\r[INFO] No audio recorded.                                ", flush=True)
-            return
+        # if not self.audio_chunks:
+        #     print("\r[INFO] No audio recorded.                                ", flush=True)
+        #     return
 
         # Concatenate audio and flatten into 1D float32 array
         audio_data = np.concatenate(self.audio_chunks, axis=0).flatten().astype(np.float32)
@@ -226,21 +227,37 @@ class MoonshineApp:
         def on_release(key):
             if key == keyboard.Key.alt_r or key == keyboard.Key.alt_gr:
                 self.stop_recording()
-            elif key == keyboard.Key.esc:
-                print("\nExiting...")
-                return False  # Stop listener
 
         print("\n" + "=" * 50)
         print("Moonshine Base ASR - Ready!")
         print("Press and HOLD 'Right Alt' to dictate.")
-        print("Release to transcribe. Press 'Esc' to exit.")
+        print("Release to transcribe.")
         print("=" * 50 + "\n")
 
         with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
             listener.join()
 
 
+def add_to_startup():
+    if os.name == 'nt':
+        startup_dir = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+        vbs_path = os.path.join(startup_dir, 'moonshine_asr.vbs')
+        
+        script_path = os.path.abspath(__file__)
+        python_exe = sys.executable
+        
+        if not os.path.exists(vbs_path):
+            try:
+                with open(vbs_path, "w") as f:
+                    f.write('Set WshShell = CreateObject("WScript.Shell")\n')
+                    f.write(f'WshShell.Run chr(34) & "{python_exe}" & Chr(34) & " " & chr(34) & "{script_path}" & chr(34), 0\n')
+                    f.write('Set WshShell = Nothing\n')
+                print(f"Added to startup: {vbs_path} (Runs silently in background)")
+            except Exception as e:
+                print(f"Failed to add to startup: {e}")
+
 if __name__ == "__main__":
+    add_to_startup()
     try:
         app = MoonshineApp()
         app.run()
